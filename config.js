@@ -1,7 +1,17 @@
 // --- config.js ---
 require('dotenv').config();
 
-const PORT = parseInt(process.env.PORT || process.env.SERVER_PORT || 16362, 10);
+const PORT = parseInt(process.env.SERVER_PORT || process.env.PORT || 16362, 10);
+
+const rawRoles = process.env.YETKILI_ROL_IDLERI || process.env.YETKILI_ROL_ID;
+const staffRoles = Array.isArray(rawRoles)
+    ? rawRoles
+    : (typeof rawRoles === 'string' ? rawRoles.split(',').map(r => r.trim()).filter(Boolean) : []);
+
+const rawStaffRoles = process.env.STAFF_ROLES;
+const genericStaffRoles = Array.isArray(rawStaffRoles)
+    ? rawStaffRoles
+    : (typeof rawStaffRoles === 'string' ? rawStaffRoles.split(',').map(r => r.trim()).filter(Boolean) : []);
 
 const config = {
     // 🔒 Temel Bot ve Kimlik Doğrulama Bilgileri
@@ -34,8 +44,8 @@ const config = {
 
     // 🎭 Rol ID'leri (Dizilere dönüştürülmüş)
     YETKILI_ROL_ID: process.env.YETKILI_ROL_ID || '911641521147768912',
-    YETKILI_ROL_IDLERI: (process.env.YETKILI_ROL_IDLERI || process.env.YETKILI_ROL_ID || '911641521147768912,825700596383875102,1411668519921127535,1411669092691214388,914251874532753518,914213183802183761,891404623473176576').split(',').map(s => s.trim()).filter(Boolean),
-    STAFF_ROLES: (process.env.STAFF_ROLES || '914213183802183761,914251874532753518,825700596383875102,1411668519921127535,911641521147768912,1411667942206083173,891404623473176576').split(',').map(s => s.trim()).filter(Boolean),
+    YETKILI_ROL_IDLERI: staffRoles.length > 0 ? staffRoles : ['911641521147768912', '825700596383875102', '1411668519921127535', '1411669092691214388', '914251874532753518', '914213183802183761', '891404623473176576'],
+    STAFF_ROLES: genericStaffRoles.length > 0 ? genericStaffRoles : ['914213183802183761', '914251874532753518', '825700596383875102', '1411668519921127535', '911641521147768912', '1411667942206083173', '891404623473176576'],
     GOREV_ROLU_ID: process.env.GOREV_ROLU_ID || '1539380060505772092',
     SORUSTURMA_KARANTINA_ROL_ID: process.env.SORUSTURMA_KARANTINA_ROL_ID || '',
     HAFTANIN_ELEMANI_ROL_ID: process.env.HAFTANIN_ELEMANI_ROL_ID || '1539045463993356288',
