@@ -10,6 +10,9 @@ const autoDeployCommands = require('../utils/autoDeployer');
 const { sendReport, sendErrorReport } = require('../utils/reportLogger');
 const { shouldPostReminder } = require('../utils/spamMonitor');
 const { aktifDurumlariSenkronizeEt } = require('../utils/judicialSystem');
+const { yavasModlariGeriYukle } = require('../utils/crisisGuard');
+const { ilerlemeBaslat } = require('../utils/progressReporter');
+const { cleanExpiredStats } = require('../utils/auditFetcher');
 
 async function kuralHatirlatmasiniKontrolEt(client) {
     const channelId = client.config.KURAL_HATIRLATMA_KANAL_ID;
@@ -27,15 +30,110 @@ async function kuralHatirlatmasiniKontrolEt(client) {
 
 async function heartbeat(client, guild) {
     const startedAt = client.readyAt?.getTime() || Date.now();
+    const channelId = client.config.BOT_KANAL_ID;
+    const channel = channelId
+        ? (guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch(() => null))
+        : null;
+    const reporter = await ilerlemeBaslat(channel, '🟢 Bot Sistem Kontrolü (Heartbeat)');
+
     try {
+        if (reporter) await reporter.adim('DB yazma/okuma test ediliyor...');
         const dbProbe = `healthcheck_${guild.id}`;
-        db.set(dbProbe, { zaman: Date.now() });
-        if (!db.get(dbProbe)) throw new Error('croxydb yazma/okuma doğrulanamadı.');
-        await guild.fetch();
-        await sendReport(client, { title: '🟢 Bot Sistemleri Sorunsuz Çalışıyor', description: `Uptime: ${((Date.now() - startedAt) / 3600000).toFixed(2)} saat`, color: 'Green', channelId: client.config.BOT_KANAL_ID });
+        
+        try {
+            db.set(dbProbe, { zaman: Date.now() });
+            if (!db.get(dbProbe)) console.warn('⚠️ [Heartbeat] Yazma başarılı fakat okuma doğrulanamadı.');
+        } catch (dbError) {
+            console.error('⚠️ [Heartbeat] croxydb erişim hatası (Bloklanma yok):', dbError.message);
+            if (reporter) await reporter.adim('DB okuma/yazma gecikmeli, devam ediliyor...');
+        }
+
+        if (reporter) await reporter.adim('Guild fetch ediliyor...');
+        await guild.fetch().catch(() => {});
+
+        const uptime = ((Date.now() - startedAt) / 3600000).toFixed(2);
+        if (reporter) {
+            await reporter.bitir(true, `Sistemler sorunsuz çalışıyor. Uptime: ${uptime} saat`);
+        } else {
+            await sendReport(client, { title: '🟢 Bot Sistemleri Sorunsuz Çalışıyor', description: `Uptime: ${uptime} saat`, color: 'Green', channelId });
+        }
     } catch (error) {
+        if (reporter) {
+            await reporter.hata('Heartbeat', error);
+        }
         await sendErrorReport(client, '🔴 Sistemde Aksam Saptandı', error, [{ name: 'Uptime', value: `${((Date.now() - startedAt) / 3600000).toFixed(2)} saat` }]);
     }
+}
+
+async function runBackgroundSyncTasks(client, guild) {
+    console.log('🔄 [Arka Plan] Tarihsel veriler ve ağır senkronizasyon işlemleri başlatılıyor...');
+    
+    const tasks = [
+        async () => {
+            const { croxyToQuickMigration, syncAllMembersAndRoles } = require('../services/userProfileSync');
+            await croxyToQuickMigration();
+            await syncAllMembersAndRoles(client, guild);
+        },
+        async () => aktifDurumlariSenkronizeEt(guild.id),
+        async () => {
+            await gorevleriGeriYukle(guild, client.config.GOREV_ROLU_ID).catch(error => {
+                console.error('[Görev] Kalıcı görevler geri yüklenemedi:', error.message);
+            });
+        },
+        async () => {
+            await yavasModlariGeriYukle(client).catch(error => {
+                console.error('[Kriz Koruması] Restart sonrası yavaş mod kurtarma başarısız:', error.message);
+            });
+        },
+        async () => cleanExpiredStats(),
+        async () => {
+            await acilisRaporuGonder(client, guild).catch(error => {
+                console.error('[Sistem] Açılış durum raporu gönderilemedi:', error.message);
+            });
+        },
+        async () => {
+            await checkMonthlyKudosReport(client, guild, db).catch(error => {
+                console.error('[Kudos] Açılış aylık rapor kontrolü başarısız:', error);
+            });
+        },
+        async () => {
+            await standupKontrolEt(client, guild, { reason: 'İlk çevrimiçi kontrol', forceReport: true }).catch(error => {
+                console.error('[Stand-up] Açılış kontrolü başarısız:', error);
+                sendErrorReport(client, 'Stand-up açılış kontrolü başarısız', error);
+            });
+        },
+        async () => {
+            await haftalikSkorboarduKesinlestir(client, guild).catch(error => {
+                console.error('[Skorboard] Restart sonrası kontrol başarısız:', error);
+            });
+        }
+    ];
+
+    // Detached background worker queue
+    setTimeout(async () => {
+        for (let i = 0; i < tasks.length; i++) {
+            try {
+                await tasks[i]();
+            } catch (err) {
+                console.error(`🔴 [Arka Plan] Görev ${i + 1} sırasında hata:`, err);
+            }
+
+            // Cache sweeping to strictly cap RAM under 150MB
+            if (guild.channels.cache) {
+                guild.channels.cache.forEach(channel => {
+                    if (channel.messages && typeof channel.messages.cache.sweep === 'function') {
+                        channel.messages.cache.sweep(() => true);
+                    }
+                });
+            }
+
+            if (global.gc) global.gc();
+
+            // Delay between batches: 2000ms
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        console.log('✅ [Arka Plan] Tüm senkronizasyon görevleri tamamlandı.');
+    }, 1000);
 }
 
 module.exports = {
@@ -50,6 +148,7 @@ module.exports = {
             deployBasarili = false;
             await sendErrorReport(client, 'Slash komutları senkronizasyonu başarısız', error);
         }
+        
         await sendReport(client, {
             title: deployBasarili ? '✅ Bot hazır' : '⚠️ Bot hazır, slash senkronizasyonu başarısız',
             description: deployBasarili ? 'Tekil clientReady akışı aktif.' : 'Bot bağlandı fakat slash komutları senkronize edilemedi.',
@@ -60,24 +159,9 @@ module.exports = {
         const guildId = client.config.GUILD_ID;
         const guild = client.guilds.cache.get(guildId);
         if (!guild) return;
-        aktifDurumlariSenkronizeEt(guild.id);
 
-        await gorevleriGeriYukle(guild, client.config.GOREV_ROLU_ID).catch(error => {
-            console.error('[Görev] Kalıcı görevler geri yüklenemedi:', error.message);
-        });
-
-        await acilisRaporuGonder(client, guild).catch(error => {
-            console.error('[Sistem] Açılış durum raporu gönderilemedi:', error.message);
-        });
-
-        await checkMonthlyKudosReport(client, guild, db).catch(error => {
-            console.error('[Kudos] Açılış aylık rapor kontrolü başarısız:', error);
-        });
-
-        standupKontrolEt(client, guild, { reason: 'İlk çevrimiçi kontrol', forceReport: true }).catch(error => {
-            console.error('[Stand-up] Açılış kontrolü başarısız:', error);
-            sendErrorReport(client, 'Stand-up açılış kontrolü başarısız', error);
-        });
+        // Arka plan görevlerini asenkron ve bloklamadan başlat
+        runBackgroundSyncTasks(client, guild);
 
         client.on('shardReady', () => {
             aktifDurumlariSenkronizeEt(guild.id);
@@ -86,7 +170,7 @@ module.exports = {
             });
         });
 
-        cron.schedule('* * * * *', async () => {
+        cron.schedule('0 9 * * *', async () => {
             await standupKontrolEt(client, guild, { reason: '09:00 günlük API kontrolü' }).catch(error => {
                 sendErrorReport(client, 'Stand-up günlük API kontrolü başarısız', error);
             });
@@ -112,10 +196,6 @@ module.exports = {
             await haftalikSkorboarduKesinlestir(client, guild).catch(error => {
                 console.error('[Skorboard] Haftalık kesinleştirme başarısız:', error);
             });
-        });
-
-        await haftalikSkorboarduKesinlestir(client, guild).catch(error => {
-            console.error('[Skorboard] Restart sonrası kontrol başarısız:', error);
         });
     },
 };

@@ -1,41 +1,51 @@
 // src/services/dmService.js
 
-const db = require('croxydb');
+const config = require('../../config.js');
 
+/**
+ * Banlı kullanıcıya bile DM gönderebilen servis.
+ * guild.members yerine client.users.fetch kullanır.
+ */
 module.exports = {
-    /**
-     * Kullanıcıya anında DM gönderir. DM kapalıysa hata loglanır.
-     * @param {object} guild - Sunucu nesnesi.
-     * @param {string} userId - Hedef kullanıcı ID'si.
-     * @param {string} messageText - Gönderilecek mesaj.
-     * @param {string} context - Gönderimin kaynağı (örneğin: 'Soruşturma Açıldı').
-     */
-    async sendUserDM: async (guild, userId, messageText, context) => {
+    async sendUserDM(guildOrClient, userId, messageText, context) {
         try {
-            const user = await guild.users.fetch(userId).catch(() => null);
+            // guildOrClient hem guild hem de client olarak gelebilir
+            const client = guildOrClient?.client || guildOrClient;
+            const user = await client.users.fetch(userId).catch(() => null);
 
-            if (user) {
-                // Kullanıcının DM'inin açık olup olmadığını kontrol et (Discord.js v14'teki yöntem)
-                const isDMsOpen = user.dmChannel && user.dmChannel.isPrivate();
-
-                if (isDMsOpen) {
-                    const channel = user.dmChannel;
-                    await channel.send(messageText).catch(err => {
-                        console.error(`[DM HATA] Kullanıcı ${userId} için DM gönderilemedi (Kanal kapalı/Hata): ${err.message}`);
-                    });
-                    return { success: true, log: `DM başarıyla gönderildi: ${context}` };
-                } else {
-                    // DM kapalıysa loglama yap
-                    console.error(`[DM HATA] Kullanıcı ${userId} için DM gönderilemedi (DM kapalı): ${context}`);
-                    return { success: false, log: `DM kapalı olduğu için bildirim iletilemedi: ${context}` };
-                }
-            } else {
-                console.error(`[DM HATA] Sunucuda bulunamayan kullanıcı ID: ${userId}. Bildirim yapılamadı.`);
-                return { success: false, log: `Sunucuda bulunamayan kullanıcı ID: ${userId}` };
+            if (!user) {
+                console.warn(`[DM] Kullanıcı bulunamadı: ${userId} (${context})`);
+                return { success: false, log: `Kullanıcı bulunamadı: ${userId}` };
             }
-        } catch (error) {
-            console.error(`[DM GENEL HATA] Kullanıcı ${userId} ile iletişim kurulamadı:`, error);
-            return { success: false, log: `DM genel hata: ${error.message}` };
+
+            const sent = await user.send(messageText).catch(err => {
+                console.warn(`[DM] DM kapalı veya engel: ${userId} — ${err.message} (${context})`);
+                return null;
+            });
+
+            return sent
+                ? { success: true, log: `DM gönderildi: ${context}` }
+                : { success: false, log: `DM iletilemedi (kapalı): ${context}` };
+        } catch (err) {
+            console.error(`[DM HATA] ${userId} — ${err.message} (${context})`);
+            return { success: false, log: `DM genel hata: ${err.message}` };
+        }
+    },
+
+    /**
+     * Embed ile DM gönderir.
+     */
+    async sendUserDMEmbed(guildOrClient, userId, embed, context) {
+        try {
+            const client = guildOrClient?.client || guildOrClient;
+            const user = await client.users.fetch(userId).catch(() => null);
+            if (!user) return { success: false, log: `Kullanıcı bulunamadı: ${userId}` };
+            const sent = await user.send({ embeds: [embed] }).catch(() => null);
+            return sent
+                ? { success: true }
+                : { success: false, log: `DM iletilemedi (kapalı): ${context}` };
+        } catch (err) {
+            return { success: false, log: err.message };
         }
     }
 };

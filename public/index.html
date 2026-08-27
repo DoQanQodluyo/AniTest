@@ -1,0 +1,445 @@
+<!-- public/index.html -->
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistem Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen flex flex-col font-sans">
+    
+    <!-- Navbar -->
+    <header class="bg-zinc-900 border-b border-zinc-800 shadow-sm sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded bg-indigo-600 flex items-center justify-center font-bold text-white shadow-lg">DB</div>
+                    <span class="font-semibold text-lg tracking-tight">Sistem Dashboard</span>
+                </div>
+                <div class="flex items-center gap-4 hidden" id="user-nav">
+                    <div class="flex flex-col text-right">
+                        <span class="text-sm font-medium" id="nav-username">Yükleniyor...</span>
+                        <span class="text-xs text-zinc-400" id="nav-role">Üye</span>
+                    </div>
+                    <img id="nav-avatar" class="w-10 h-10 rounded-full border-2 border-zinc-700" src="https://cdn.discordapp.com/embed/avatars/0.png" alt="Avatar">
+                    <a href="/auth/logout" class="ml-4 px-3 py-1.5 text-sm font-medium bg-red-600 hover:bg-red-700 rounded transition-colors shadow">Çıkış Yap</a>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full flex-grow hidden" id="app-content">
+        
+        <!-- Tab Navigation (Only visible for Admins) -->
+        <div class="mb-6 border-b border-zinc-800 hidden" id="admin-tabs">
+            <nav class="-mb-px flex space-x-8">
+                <button onclick="switchTab('member-view')" id="tab-member" class="whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm border-indigo-500 text-indigo-400">Üye Görünümü</button>
+                <button onclick="switchTab('admin-view')" id="tab-admin" class="whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-700">Yönetici Paneli</button>
+            </nav>
+        </div>
+
+        <!-- 1. ÜYE GÖRÜNÜMÜ -->
+        <div id="member-view" class="space-y-6">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Profil Kartı -->
+                <div class="bg-zinc-900 p-6 rounded-xl border border-zinc-800 shadow-md flex flex-col items-center text-center">
+                    <img id="profile-avatar" class="w-24 h-24 rounded-full border-4 border-zinc-700 mb-4 shadow-lg" src="" alt="Avatar">
+                    <h2 class="text-xl font-bold" id="profile-username">Kullanıcı</h2>
+                    <p class="text-sm text-zinc-400 mb-4">Hoş Geldiniz!</p>
+                    <div class="w-full bg-zinc-800 p-3 rounded-lg mb-4 flex justify-between items-center border border-zinc-700">
+                        <span class="text-sm font-medium text-zinc-300">Teşekkür (Kudos)</span>
+                        <span class="text-lg font-bold text-yellow-400" id="profile-kudos">0</span>
+                    </div>
+                    <div class="w-full text-left">
+                        <h3 class="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-2">Roller</h3>
+                        <div id="profile-roles" class="flex flex-wrap gap-2">
+                            <!-- Roles injected here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Görev Kartı -->
+                <div class="bg-zinc-900 p-6 rounded-xl border border-zinc-800 shadow-md lg:col-span-2 flex flex-col justify-center">
+                    <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        Haftalık Görev Durumu
+                    </h2>
+                    <div class="mb-2 flex justify-between text-sm font-medium">
+                        <span id="task-text">Görev İlerlemesi (0/10)</span>
+                        <span id="task-percentage" class="text-indigo-400">0%</span>
+                    </div>
+                    <div class="w-full bg-zinc-800 rounded-full h-4 shadow-inner border border-zinc-700">
+                        <div id="task-progress-bar" class="bg-indigo-500 h-4 rounded-full transition-all duration-500 ease-out" style="width: 0%"></div>
+                    </div>
+                    <p id="task-status" class="text-xs text-zinc-400 mt-4 italic">Veriler yükleniyor...</p>
+                </div>
+            </div>
+
+            <!-- Aktivite Grafiği -->
+            <div class="bg-zinc-900 p-6 rounded-xl border border-zinc-800 shadow-md">
+                <h2 class="text-lg font-semibold mb-4">Son 7 Günlük Aktivite Eğrisi</h2>
+                <div class="w-full h-72">
+                    <canvas id="activityChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. YÖNETİCİ GÖRÜNÜMÜ -->
+        <div id="admin-view" class="space-y-6 hidden">
+            <!-- İstatistik Kartları -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div class="bg-zinc-900 p-6 rounded-xl border border-zinc-800 shadow-md">
+                    <div class="text-sm font-medium text-zinc-400">RAM Kullanımı</div>
+                    <div class="mt-2 flex items-baseline gap-2">
+                        <span class="text-3xl font-bold text-white" id="admin-ram">0.00</span>
+                        <span class="text-sm text-zinc-500">MB</span>
+                    </div>
+                </div>
+                <div class="bg-zinc-900 p-6 rounded-xl border border-zinc-800 shadow-md">
+                    <div class="text-sm font-medium text-zinc-400">Uptime</div>
+                    <div class="mt-2 flex items-baseline gap-2">
+                        <span class="text-3xl font-bold text-white" id="admin-uptime">0.00</span>
+                        <span class="text-sm text-zinc-500">Saat</span>
+                    </div>
+                </div>
+                <div class="bg-zinc-900 p-6 rounded-xl border border-zinc-800 shadow-md">
+                    <div class="text-sm font-medium text-zinc-400">Toplam Üye</div>
+                    <div class="mt-2 flex items-baseline gap-2">
+                        <span class="text-3xl font-bold text-white" id="admin-members">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Kanal Yönetimi -->
+                <div class="bg-zinc-900 p-6 rounded-xl border border-zinc-800 shadow-md">
+                    <h2 class="text-lg font-semibold mb-4">Kanal Konfigürasyonu</h2>
+                    <form id="form-channels" class="space-y-4" onsubmit="handleChannelSubmit(event)">
+                        <div>
+                            <label class="block text-sm font-medium text-zinc-300 mb-1">Hedef Kanal</label>
+                            <select id="channel-select" class="w-full bg-zinc-800 border border-zinc-700 rounded p-2 text-white focus:outline-none focus:border-indigo-500" required>
+                                <option value="">Kanal Seçin...</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-zinc-300 mb-1">Kanal Tipi</label>
+                            <select id="channel-type" class="w-full bg-zinc-800 border border-zinc-700 rounded p-2 text-white focus:outline-none focus:border-indigo-500" required>
+                                <option value="stat">İstatistik Kanalı (stat)</option>
+                                <option value="kriz">Kriz Kontrol Kanalı (kriz)</option>
+                                <option value="duyuru">Duyuru Kanalı (duyuru)</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded transition-colors shadow">Kanalı Ekle / Çıkar</button>
+                    </form>
+                </div>
+
+                <!-- Ekip Liderliği -->
+                <div class="bg-zinc-900 p-6 rounded-xl border border-zinc-800 shadow-md">
+                    <h2 class="text-lg font-semibold mb-4">Ekip ve Liderlik Yönetimi</h2>
+                    <form id="form-team" class="space-y-4" onsubmit="handleTeamSubmit(event)">
+                        <div>
+                            <label class="block text-sm font-medium text-zinc-300 mb-1">Takım Adı (Örn: Mod Ekibi)</label>
+                            <input type="text" id="team-name" class="w-full bg-zinc-800 border border-zinc-700 rounded p-2 text-white focus:outline-none focus:border-indigo-500" required>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-zinc-300 mb-1">Hedef Kullanıcı ID</label>
+                            <input type="text" id="team-leader-id" class="w-full bg-zinc-800 border border-zinc-700 rounded p-2 text-white focus:outline-none focus:border-indigo-500" required>
+                        </div>
+                        <div class="flex gap-4">
+                            <button type="submit" onclick="document.getElementById('team-action').value='assign'" class="flex-1 bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-4 rounded transition-colors shadow">Lider Ata</button>
+                            <button type="submit" onclick="document.getElementById('team-action').value='remove'" class="flex-1 bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded transition-colors shadow">Görevi Al</button>
+                        </div>
+                        <input type="hidden" id="team-action" value="assign">
+                    </form>
+                </div>
+
+                <!-- Sicil & Soruşturma -->
+                <div class="bg-zinc-900 p-6 rounded-xl border border-zinc-800 shadow-md lg:col-span-2">
+                    <h2 class="text-lg font-semibold mb-4">Sicil & Soruşturma Masası</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                        <div>
+                            <h3 class="text-sm font-medium text-zinc-300 mb-2">Sicil Sorgula</h3>
+                            <div class="flex gap-2">
+                                <input type="text" id="sicil-search-id" placeholder="Kullanıcı ID..." class="flex-1 bg-zinc-800 border border-zinc-700 rounded p-2 text-white focus:outline-none focus:border-indigo-500">
+                                <button onclick="fetchSicil()" class="bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded transition-colors">Ara</button>
+                            </div>
+                            <div id="sicil-results" class="mt-4 space-y-2 max-h-48 overflow-y-auto">
+                                <!-- Sonuçlar -->
+                                <p class="text-sm text-zinc-500 italic">Sorgulama bekleniyor...</p>
+                            </div>
+                        </div>
+                        <div>
+                            <h3 class="text-sm font-medium text-zinc-300 mb-2">Yeni Kayıt Ekle</h3>
+                            <form id="form-sicil" class="space-y-3" onsubmit="handleSicilSubmit(event)">
+                                <input type="text" id="sicil-add-id" placeholder="Kullanıcı ID" class="w-full bg-zinc-800 border border-zinc-700 rounded p-2 text-white focus:outline-none focus:border-indigo-500" required>
+                                <input type="text" id="sicil-add-reason" placeholder="Sebep (Örn: Küfür, Spam)" class="w-full bg-zinc-800 border border-zinc-700 rounded p-2 text-white focus:outline-none focus:border-indigo-500" required>
+                                <select id="sicil-add-type" class="w-full bg-zinc-800 border border-zinc-700 rounded p-2 text-white focus:outline-none focus:border-indigo-500" required>
+                                    <option value="Uyar">Uyarı (Uyar)</option>
+                                    <option value="Mute">Susturma (Mute)</option>
+                                    <option value="Ban">Yasaklama (Ban)</option>
+                                </select>
+                                <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded font-medium shadow">Kaydı İşle</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Error/Loading Overlay -->
+    <div id="loading-overlay" class="fixed inset-0 bg-zinc-950 flex items-center justify-center z-[100]">
+        <div class="text-center">
+            <svg class="animate-spin h-10 w-10 text-indigo-500 mx-auto mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+            <p class="text-zinc-400 font-medium">Sistem Yükleniyor...</p>
+        </div>
+    </div>
+
+    <script>
+        let userData = null;
+        let activityChartInstance = null;
+
+        async function init() {
+            try {
+                // 1. Profil ve Üye verilerini çek
+                const profileRes = await fetch('/api/user/profile');
+                if (profileRes.status === 401) {
+                    window.location.href = '/auth/login';
+                    return;
+                }
+                const data = await profileRes.json();
+                if (data.error) throw new Error(data.error);
+
+                userData = data.profile;
+                populateProfile(data.profile, data.stats);
+                renderChart(data.stats.chart);
+
+                document.getElementById('loading-overlay').classList.add('hidden');
+                document.getElementById('app-content').classList.remove('hidden');
+                document.getElementById('user-nav').classList.remove('hidden');
+
+                // 2. Admin verilerini çek (Yetkili ise)
+                if (userData.isAdmin) {
+                    document.getElementById('admin-tabs').classList.remove('hidden');
+                    document.getElementById('nav-role').textContent = 'Yönetici';
+                    document.getElementById('nav-role').classList.replace('text-zinc-400', 'text-indigo-400');
+                    fetchAdminData();
+                } else if (userData.isStaff) {
+                    document.getElementById('nav-role').textContent = 'Yetkili';
+                    document.getElementById('nav-role').classList.replace('text-zinc-400', 'text-green-400');
+                }
+            } catch (err) {
+                console.error(err);
+                document.getElementById('loading-overlay').innerHTML = `<p class="text-red-500 font-bold">Hata: ${err.message}</p>`;
+            }
+        }
+
+        function populateProfile(profile, stats) {
+            document.getElementById('nav-username').textContent = profile.username;
+            document.getElementById('nav-avatar').src = profile.avatar;
+            document.getElementById('profile-username').textContent = profile.username;
+            document.getElementById('profile-avatar').src = profile.avatar;
+            document.getElementById('profile-kudos').textContent = stats.kudos || 0;
+
+            const rolesContainer = document.getElementById('profile-roles');
+            rolesContainer.innerHTML = '';
+            if (profile.roles && profile.roles.length > 0) {
+                profile.roles.forEach(role => {
+                    if (role.name === '@everyone') return;
+                    const span = document.createElement('span');
+                    span.className = 'px-2 py-1 text-xs rounded border bg-zinc-800 border-zinc-700 whitespace-nowrap';
+                    span.style.color = role.color !== '#000000' ? role.color : '#cbd5e1';
+                    span.textContent = role.name;
+                    rolesContainer.appendChild(span);
+                });
+            } else {
+                rolesContainer.innerHTML = '<span class="text-xs text-zinc-500">Rol bulunamadı.</span>';
+            }
+
+            // Görev Barı
+            const g = stats.gorev || { ilerleme: 0, hedef: 10, tamamlandi: false };
+            const pct = Math.min(100, Math.round((g.ilerleme / (g.hedef || 1)) * 100));
+            document.getElementById('task-text').textContent = `Görev İlerlemesi (${g.ilerleme}/${g.hedef})`;
+            document.getElementById('task-percentage').textContent = `${pct}%`;
+            document.getElementById('task-progress-bar').style.width = `${pct}%`;
+            document.getElementById('task-status').textContent = g.tamamlandi ? '🎉 Bu haftaki görevinizi tamamladınız!' : 'Görevinizi tamamlamak için aktif olmaya devam edin.';
+        }
+
+        function renderChart(chartData) {
+            const ctx = document.getElementById('activityChart').getContext('2d');
+            if (activityChartInstance) activityChartInstance.destroy();
+
+            activityChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: chartData.labels,
+                    datasets: [
+                        {
+                            label: 'Mesaj (Adet)',
+                            data: chartData.mesajVerisi,
+                            borderColor: '#818cf8',
+                            backgroundColor: 'rgba(129, 140, 248, 0.1)',
+                            tension: 0.3,
+                            fill: true,
+                            yAxisID: 'y'
+                        },
+                        {
+                            label: 'Ses (Dakika)',
+                            data: chartData.sesVerisi,
+                            borderColor: '#34d399',
+                            backgroundColor: 'transparent',
+                            tension: 0.3,
+                            yAxisID: 'y1'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { labels: { color: '#e4e4e7' } }
+                    },
+                    scales: {
+                        x: { grid: { color: '#3f3f46' }, ticks: { color: '#a1a1aa' } },
+                        y: { type: 'linear', display: true, position: 'left', grid: { color: '#3f3f46' }, ticks: { color: '#a1a1aa' } },
+                        y1: { type: 'linear', display: true, position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#a1a1aa' } }
+                    }
+                }
+            });
+        }
+
+        async function fetchAdminData() {
+            try {
+                // Overview
+                const resOver = await fetch('/api/admin/overview');
+                const over = await resOver.json();
+                document.getElementById('admin-ram').textContent = over.ram;
+                document.getElementById('admin-uptime').textContent = over.uptime;
+                document.getElementById('admin-members').textContent = over.members;
+
+                // Channels
+                const resCh = await fetch('/api/admin/channels');
+                const ch = await resCh.json();
+                const select = document.getElementById('channel-select');
+                select.innerHTML = '<option value="">Kanal Seçin...</option>';
+                ch.channels.forEach(c => {
+                    const typeIco = c.type === 0 ? '📝' : '🎙️';
+                    const isStat = ch.configs.statChannels.includes(c.id) ? '[STAT] ' : '';
+                    const isKriz = ch.configs.krizChannels.includes(c.id) ? '[KRİZ] ' : '';
+                    select.innerHTML += `<option value="${c.id}">${isStat}${isKriz}${typeIco} ${c.name}</option>`;
+                });
+            } catch (err) {
+                console.error('Admin veri hatası:', err);
+            }
+        }
+
+        function switchTab(tabId) {
+            document.getElementById('member-view').classList.add('hidden');
+            document.getElementById('admin-view').classList.add('hidden');
+            document.getElementById('tab-member').classList.replace('border-indigo-500', 'border-transparent');
+            document.getElementById('tab-member').classList.replace('text-indigo-400', 'text-zinc-400');
+            document.getElementById('tab-admin').classList.replace('border-indigo-500', 'border-transparent');
+            document.getElementById('tab-admin').classList.replace('text-indigo-400', 'text-zinc-400');
+
+            document.getElementById(tabId).classList.remove('hidden');
+            const btnId = tabId === 'member-view' ? 'tab-member' : 'tab-admin';
+            document.getElementById(btnId).classList.replace('border-transparent', 'border-indigo-500');
+            document.getElementById(btnId).classList.replace('text-zinc-400', 'text-indigo-400');
+        }
+
+        async function handleChannelSubmit(e) {
+            e.preventDefault();
+            const channelId = document.getElementById('channel-select').value;
+            const type = document.getElementById('channel-type').value;
+            if (!channelId) return alert('Kanal seçin.');
+
+            const res = await fetch('/api/admin/channels/set', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ channelId, type })
+            });
+            const data = await res.json();
+            if (data.success) {
+                alert('Kanal konfigürasyonu başarıyla güncellendi.');
+                fetchAdminData(); // Refresh list
+            } else {
+                alert('Hata: ' + data.error);
+            }
+        }
+
+        async function fetchSicil() {
+            const id = document.getElementById('sicil-search-id').value;
+            if (!id) return;
+            const res = await fetch(`/api/admin/sicil/${id}`);
+            const data = await res.json();
+            const container = document.getElementById('sicil-results');
+            container.innerHTML = '';
+            
+            if (data.sicil && data.sicil.length > 0) {
+                data.sicil.forEach(s => {
+                    const date = new Date(s.tarih).toLocaleString('tr-TR');
+                    container.innerHTML += `
+                        <div class="bg-zinc-800 p-2 rounded text-sm border border-zinc-700">
+                            <div class="flex justify-between text-xs text-zinc-400 mb-1">
+                                <span>${date}</span>
+                                <span>Yetkili: ${s.yetkili}</span>
+                            </div>
+                            <p><strong class="text-red-400">[${s.ceza}]</strong> ${s.sebep}</p>
+                        </div>
+                    `;
+                });
+            } else {
+                container.innerHTML = '<p class="text-sm text-green-400">Temiz sicil. Kayıt bulunamadı.</p>';
+            }
+        }
+
+        async function handleSicilSubmit(e) {
+            e.preventDefault();
+            const targetUserId = document.getElementById('sicil-add-id').value;
+            const reason = document.getElementById('sicil-add-reason').value;
+            const penaltyType = document.getElementById('sicil-add-type').value;
+
+            const res = await fetch('/api/admin/sicil/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ targetUserId, reason, penaltyType })
+            });
+            const data = await res.json();
+            if (data.success) {
+                alert('Sicil kaydı başarıyla eklendi.');
+                document.getElementById('sicil-search-id').value = targetUserId;
+                fetchSicil();
+                e.target.reset();
+            } else {
+                alert('Hata: ' + data.error);
+            }
+        }
+
+        async function handleTeamSubmit(e) {
+            e.preventDefault();
+            const teamName = document.getElementById('team-name').value;
+            const leaderId = document.getElementById('team-leader-id').value;
+            const action = document.getElementById('team-action').value;
+
+            const res = await fetch('/api/admin/team/leader', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ teamName, leaderId, action })
+            });
+            const data = await res.json();
+            if (data.success) {
+                alert(`Takım işlemi başarılı: ${action === 'assign' ? 'Atandı' : 'Görevi Alındı'}`);
+            } else {
+                alert('Hata: ' + data.error);
+            }
+        }
+
+        // Başlat
+        window.onload = init;
+    </script>
+</body>
+</html>

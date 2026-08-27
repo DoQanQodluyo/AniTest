@@ -7,12 +7,17 @@
     "start": "node index.js"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^1.0.7",
+    "better-sqlite3": "^13.0.3",
     "chartjs-node-canvas": "^5.0.0",
     "croxydb": "^0.0.7",
     "discord.js": "^14.15.3",
     "dotenv": "^17.4.2",
     "dotnet": "^1.1.4",
+    "express": "^4.19.2",
+    "cookie-parser": "^1.4.6",
     "mathjs": "^14.9.1",
-    "node-cron": "^3.0.3"
+    "node-cron": "^3.0.3",
+    "quick.db": "^9.1.7"
   }
 }

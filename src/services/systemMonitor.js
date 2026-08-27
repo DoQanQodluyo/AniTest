@@ -1,32 +1,63 @@
 // src/services/systemMonitor.js
 
 const { EmbedBuilder } = require('discord.js');
-const db = require('croxydb');
+const fs = require('fs').promises;
+const path = require('path');
 
 module.exports = {
+    /**
+     * Veritabanını güvenli bir şekilde başlatır ve doğrular.
+     */
+    async verifyDatabase() {
+        const dbPath = path.join(process.cwd(), 'croxydb', 'croxydb.json');
+        const maxRetries = 3;
+        let attempts = 0;
+        
+        while (attempts < maxRetries) {
+            try {
+                await fs.mkdir(path.dirname(dbPath), { recursive: true });
+                
+                try {
+                    const data = await fs.readFile(dbPath, 'utf8');
+                    JSON.parse(data || '{}');
+                    return true;
+                } catch (err) {
+                    if (err.code === 'ENOENT' || err instanceof SyntaxError) {
+                        console.log(`⚠️ [Veritabanı] croxydb.json bulunamadı veya bozuk. Onarılıyor (Deneme: ${attempts + 1})...`);
+                        await fs.writeFile(dbPath, '{}', 'utf8');
+                    } else {
+                        throw err;
+                    }
+                }
+                return true;
+            } catch (err) {
+                console.error(`🔴 [Veritabanı] Doğrulama başarısız (Deneme ${attempts + 1}):`, err.message);
+                attempts++;
+                await new Promise(res => setTimeout(res, 1500 * attempts));
+            }
+        }
+        
+        console.error('🔴 [Veritabanı] Tüm kurtarma denemeleri başarısız oldu.');
+        return false;
+    },
+
     /**
      * Sistem durumunu ve uptime'ı raporlar.
      * @param {object} client - Discord Client nesnesi.
      * @param {object} guild - Sunucu nesnesi.
      */
-    async reportSystemStatus: async (client, guild) => {
-        const db = require('croxydb');
-        const config = client.config;
+    reportSystemStatus: async function(client, guild) {
+        const isDbHealthy = await this.verifyDatabase();
 
-        // 1. Health Check (Simülasyon: DB erişimini kontrol etme)
-        // Gerçek bir API/DB sağlık kontrolü buraya eklenebilir.
-        const dbCheck = await new Promise(resolve => setTimeout(resolve, 50)); // 50ms gecikme simülasyonu
-
-        if (!dbCheck) {
+        if (!isDbHealthy) {
             const errorEmbed = new EmbedBuilder()
                 .setTitle('🔴 Sistemde Aksama Saptandı')
                 .setColor('Red')
-                .setDescription(`Cron kontrol başarısız oldu. Veritabanı veya kritik bir hizmet kontrol edilmeli.`);
+                .setDescription(`Veritabanı yazma/okuma doğrulaması başarısız oldu. Kritik servisler askıda olabilir.`);
             
             return { title: '🔴 Sistemde Aksama Saptandı', description: errorEmbed.description, color: 'Red', fields: [{ name: 'Kontrol Zamanı', value: new Date().toISOString() }] };
         }
 
-        // 2. Uptime Raporu (6 Saatlik periyot için simülasyon)
         const uptimeHours = Math.floor((Date.now() - client.readyAt.milliseconds) / (1000 * 60 * 60));
         const uptimeEmbed = new EmbedBuilder()
             .setTitle('🟢 Bot Sistemleri Sorunsuz Çalışıyor')

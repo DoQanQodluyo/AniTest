@@ -70,5 +70,10 @@ module.exports = {
             }
         }
 
+        // 📰 Gazete İstatistik Takibi
+        const bugunStr = new Date().toISOString().split('T')[0];
+        db.add(`gazete_msg_${bugunStr}`, 1);
+        db.add(`gazete_user_msg_${bugunStr}_${userId}`, 1);
+        db.add(`gazete_channel_msg_${bugunStr}_${message.channel.id}`, 1);
     },
 };

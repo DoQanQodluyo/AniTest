@@ -1,6 +1,7 @@
 const { AttachmentBuilder, EmbedBuilder } = require('discord.js');
 const { ChartJSNodeCanvas } = require('chartjs-node-canvas');
 const db = require('croxydb');
+const { ilerlemeBaslat } = require('./progressReporter');
 
 const chartCanvas = new ChartJSNodeCanvas({ width: 800, height: 400, backgroundColour: '#111827' });
 
@@ -196,7 +197,26 @@ async function apiOncelikliAnalizPaketiOlustur(guild, tur = 'saatlik', kanalId =
 async function analizRaporuGonder(client, guild, tur = 'saatlik') {
     const kanal = client.config.BOT_KANAL_ID && (guild.channels.cache.get(client.config.BOT_KANAL_ID) || await guild.channels.fetch(client.config.BOT_KANAL_ID).catch(() => null));
     if (!kanal?.isTextBased()) return null;
-    return kanal.send(await apiOncelikliAnalizPaketiOlustur(guild, tur));
+    const reporter = await ilerlemeBaslat(kanal, '📈 Trafik Analiz Raporu');
+
+    if (reporter) await reporter.adim('Trafik verisi toplanıyor...');
+
+    const callback = reporter ? async (metin) => reporter.adim(metin) : null;
+
+    let paket;
+    try {
+        paket = await apiOncelikliAnalizPaketiOlustur(guild, tur, null, callback);
+    } catch (error) {
+        if (reporter) await reporter.hata('Trafik Analizi', error);
+        throw error;
+    }
+
+    if (reporter) await reporter.adim('Grafik oluşturuluyor...');
+
+    const res = await kanal.send(paket);
+
+    if (reporter) await reporter.bitir(true, 'Trafik analizi raporu başarıyla oluşturuldu ve kanala gönderildi.');
+    return res;
 }
 
 module.exports = { saatAnahtari, trafikArtir, veriTopla, apiVerisiTopla, sonDortHaftaAnalizi, istatistikHesapla, yuzdelikEsikleri, grafikOlustur, analizPaketiOlustur, apiOncelikliAnalizPaketiOlustur, analizRaporuGonder };

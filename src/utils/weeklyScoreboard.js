@@ -1,5 +1,6 @@
 const { EmbedBuilder } = require('discord.js');
 const db = require('croxydb');
+const { ilerlemeBaslat } = require('./progressReporter');
 
 function haftaninAraligi(tarih = new Date()) {
     const bugun = new Date(tarih);
@@ -187,20 +188,33 @@ async function haftalikSkorboarduKesinlestir(client, guild, options = {}) {
     const tamamlanmaAnahtari = `weekly_scoreboard_completed_${guild.id}_${anahtar}`;
     if (!options.zorla && db.get(tamamlanmaAnahtari)) return { atlandi: true, anahtar };
 
+    const config = client.config;
+    const raporKanali = config.BOT_KANAL_ID
+        ? (guild.channels.cache.get(config.BOT_KANAL_ID) || await guild.channels.fetch(config.BOT_KANAL_ID).catch(() => null))
+        : null;
+    const reporter = await ilerlemeBaslat(raporKanali, '📊 Haftalık Skorbord Kesinleştirme');
+
+    if (reporter) await reporter.adim('Skorlar hesaplanıyor...');
+
     if (guild.members.cache.size === 0) {
         await guild.members.fetch().catch(hata => {
             console.warn(`[Skorboard] Üye listesi yenilenemedi, mevcut cache kullanılacak: ${hata.message}`);
         });
     }
-    const config = client.config;
+
     const mesajSayaclari = await temizMesajlariTara(guild, baslangic, bitis);
     const tumVeriler = db.all();
     const uyeSkorlariSonuc = uyeSkorlari(guild, mesajSayaclari);
     const yetkiliSkorlariSonuc = personelSkorlari(guild, mesajSayaclari, tumVeriler, config, baslangic, bitis);
+
+    if (reporter) await reporter.adim('Roller güncelleniyor...');
+
     const uyeKazanan = uyeSkorlariSonuc[0]?.id || null;
     const yetkiliKazanan = yetkiliSkorlariSonuc[0]?.id || null;
     const uyeRolDevri = await rolDevri(guild, config.HAFTANIN_UYESI_ROL_ID, uyeKazanan, 'Haftanın Üyesi');
     const yetkiliRolDevri = await rolDevri(guild, config.HAFTANIN_ELEMANI_ROL_ID, yetkiliKazanan, 'Haftanın Yetkilisi');
+
+    if (reporter) await reporter.adim('Arşive kaydediliyor...');
 
     const raporEmbed = new EmbedBuilder()
         .setTitle(`📊 Haftalık Skorbord Raporu: ${guild.name}`)
@@ -213,9 +227,6 @@ async function haftalikSkorboarduKesinlestir(client, guild, options = {}) {
         )
         .setTimestamp();
 
-    const raporKanali = config.BOT_KANAL_ID
-        ? (guild.channels.cache.get(config.BOT_KANAL_ID) || await guild.channels.fetch(config.BOT_KANAL_ID).catch(() => null))
-        : null;
     if (!raporKanali?.isTextBased()) throw new Error('BOT_KANAL_ID kanalı bulunamadı veya yazılabilir değil.');
     const raporMesaji = await raporKanali.send({ embeds: [raporEmbed] });
 
@@ -245,6 +256,11 @@ async function haftalikSkorboarduKesinlestir(client, guild, options = {}) {
         tamamlanmaZamani: Date.now()
     });
     db.set(tamamlanmaAnahtari, true);
+
+    if (reporter) {
+        await reporter.bitir(true, `Haftalık skorbord başarıyla kesinleştirildi! (${anahtar})\n\nTarih aralığı: **${tarihMetni(baslangic)} - ${tarihMetni(new Date(bitis.getTime() - 1))}**`);
+    }
+
     return { atlandi: false, anahtar, raporMesajId: raporMesaji.id };
 }
 

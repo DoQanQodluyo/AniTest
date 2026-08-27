@@ -1,6 +1,7 @@
 const db = require('croxydb');
 const config = require('../../config.js');
 const { sendReport } = require('./reportLogger');
+const { ilerlemeBaslat } = require('./progressReporter');
 
 const sorular = [
     '1. Dün ne yaptın?',
@@ -69,7 +70,9 @@ async function uyeStandupBaslat(client, member, guild, date) {
             await dm.send(sorular[state.questionIndex]);
             const messages = await dm.awaitMessages({
                 filter: message => message.author.id === member.id && !message.author.bot,
-                max: 1
+                max: 1,
+                time: 600000,
+                errors: ['time']
             });
             const answer = messages.first()?.content?.trim();
             if (!answer) throw new Error('Boş yanıt alındı.');
@@ -82,9 +85,12 @@ async function uyeStandupBaslat(client, member, guild, date) {
         await dm.send('✅ Stand-up yanıtların kaydedildi. Teşekkürler.');
         return { id: member.id, tag: member.user.tag, status: 'sent', reason: 'Dört soru DM üzerinden gönderildi ve yanıtlar kaydedildi.' };
     } catch (error) {
-        const reason = error.code === 50007
+        let reason = error.code === 50007
             ? 'Kullanıcının DM kutusu kapalı.'
             : error.message || 'Bilinmeyen hata.';
+        if (error.name === 'Error' || error.size === 0 || error instanceof Map) {
+            reason = 'Zaman aşımı: 10 dakika içinde yanıt verilmedi.';
+        }
         return { id: member.id, tag: member.user.tag, status: 'failed', reason };
     } finally {
         aktifOturumlar.delete(sessionKey);
@@ -96,15 +102,24 @@ async function standupKontrolEt(client, guild, options = {}) {
     if (!saatDokuzGecti(now)) return { skipped: true, reason: 'Saat 09:00 olmadı.' };
     if (!client.isReady?.()) return { skipped: true, reason: 'Discord API bağlantısı hazır değil.' };
 
+    const channelId = config.BOT_KANAL_ID;
+    const channel = channelId
+        ? (guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch(() => null))
+        : null;
+    const reporter = await ilerlemeBaslat(channel, '📋 Günlük Stand-up Kontrolü');
+
     const dailyKey = gunlukAnahtar(now);
     const previousDaily = db.get(dailyKey);
     const daily = previousDaily || { guildId: guild.id, startedAt: Date.now(), results: {} };
     if (daily.guildId !== guild.id) daily.guildId = guild.id;
 
+    if (reporter) await reporter.adim("Üye listesi API'den çekiliyor...");
+
     let members;
     try {
         members = await guild.members.fetch();
     } catch (error) {
+        if (reporter) await reporter.hata('API üye kontrolü', error);
         await sonuclariRaporla(client, guild, [{ id: 'api', tag: 'API üye kontrolü', status: 'failed', reason: `Üye listesi alınamadı: ${error.message}` }], 'API Hatası');
         return { skipped: true, reason: error.message };
     }
@@ -112,31 +127,62 @@ async function standupKontrolEt(client, guild, options = {}) {
     const eligible = [...members.values()].filter(member => !member.user.bot && yetkiliMi(member));
     if (!eligible.length) {
         const result = { id: 'none', tag: 'Yetkili listesi', status: 'failed', reason: 'YETKILI_ROL_IDLERI rollerine sahip uygun kullanıcı bulunamadı.' };
+        if (reporter) await reporter.hata('Yetkili Listesi', new Error(result.reason));
         if (options.report !== false) await sonuclariRaporla(client, guild, [result], options.reason || 'Kontrol');
         return [result];
     }
+
+    if (reporter) await reporter.adim(`${eligible.length} kullanıcı uygun, DM gönderiliyor...`);
+
     const results = [];
+    const logLines = [];
+    let sentCount = 0;
+    let failedCount = 0;
+    let pendingCount = 0;
+
     for (const member of eligible) {
         const previous = daily.results[member.id];
         if (previous && previous.status !== 'active') {
             results.push(previous);
+            if (previous.status === 'sent' || previous.status === 'completed') sentCount++;
+            else failedCount++;
+            logLines.push(`${previous.status === 'sent' || previous.status === 'completed' ? '☑️' : '❌'} **${previous.tag || previous.id}**: ${previous.reason}`);
             continue;
         }
         if (previous?.status === 'active') delete daily.results[member.id];
         const activeResult = { id: member.id, tag: member.user.tag, status: 'active', reason: 'DM oturumu başlatıldı; yanıt bekleniyor.' };
         results.push(activeResult);
+        pendingCount++;
+
         uyeStandupBaslat(client, member, guild, now).then(async result => {
             if (result.status === 'active') return;
             const latest = db.get(dailyKey) || { ...daily, results: {} };
             latest.results[member.id] = result;
             latest.lastCheckedAt = Date.now();
             db.set(dailyKey, latest);
+
+            if (result.status === 'sent' || result.status === 'completed') {
+                sentCount++;
+                logLines.push(`✅ **${result.tag || result.id}**: Yanıtlar kaydedildi.`);
+            } else {
+                failedCount++;
+                logLines.push(`❌ **${result.tag || result.id}**: ${result.reason}`);
+            }
+
+            if (reporter) {
+                await reporter.adim(`${eligible.length} kullanıcıdan ${logLines.length} tanesi sonuçlandı...\n\n${logLines.join('\n')}`);
+            }
             await sonuclariRaporla(client, guild, [result], 'Kullanıcı Sonucu');
         }).catch(async error => {
             const result = { id: member.id, tag: member.user.tag, status: 'failed', reason: error.message || 'Stand-up oturumu başarısız.' };
             const latest = db.get(dailyKey) || { ...daily, results: {} };
             latest.results[member.id] = result;
             db.set(dailyKey, latest);
+            failedCount++;
+            logLines.push(`❌ **${member.user.tag || member.id}**: ${result.reason}`);
+            if (reporter) {
+                await reporter.adim(`${eligible.length} kullanıcıdan ${logLines.length} tanesi sonuçlandı...\n\n${logLines.join('\n')}`);
+            }
             await sonuclariRaporla(client, guild, [result], 'Kullanıcı Hatası');
         });
     }
@@ -144,6 +190,11 @@ async function standupKontrolEt(client, guild, options = {}) {
     daily.lastCheckedAt = Date.now();
     daily.memberCount = eligible.length;
     db.set(gunlukAnahtar(now), daily);
+
+    if (reporter && pendingCount === 0) {
+        await reporter.bitir(true, `Tamamlandı: ${sentCount} gönderildi/kaydedildi, ${failedCount} başarısız.\n\n${logLines.join('\n')}`);
+    }
+
     if (options.report !== false && (!previousDaily || options.forceReport)) {
         await sonuclariRaporla(client, guild, results, options.reason || 'Kontrol');
     }
