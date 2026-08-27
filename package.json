@@ -1,23 +1,19 @@
 {
-  "name": "djs-team-bot",
-  "version": "2.0.0",
-  "description": "Discord.js Moduler Takim Botu V2 - AntiCrash",
+  "name": "djs-bot",
+  "version": "1.0.0",
+  "description": "Discord.js Bot with Web Dashboard",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
   "dependencies": {
-    "@napi-rs/canvas": "^1.0.7",
-    "better-sqlite3": "^13.0.3",
-    "chartjs-node-canvas": "^5.0.0",
-    "croxydb": "^0.0.7",
-    "discord.js": "^14.15.3",
-    "dotenv": "^17.4.2",
-    "dotnet": "^1.1.4",
-    "express": "^4.19.2",
+    "@napi-rs/canvas": "^0.1.44",
     "cookie-parser": "^1.4.6",
-    "mathjs": "^14.9.1",
-    "node-cron": "^3.0.3",
-    "quick.db": "^9.1.7"
+    "croxydb": "^0.0.7",
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5",
+    "express": "^4.18.2",
+    "node-cron": "^3.0.3"
   }
 }

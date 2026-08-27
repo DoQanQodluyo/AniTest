@@ -1,38 +1,42 @@
 // --- src/dashboard/auth.js ---
 const express = require('express');
-const crypto = require('crypto');
+const { PermissionFlagsBits } = require('discord.js');
 
 function createAuthRouter(client) {
     const router = express.Router();
+    const config = client.config;
     
-    const COOKIE_SECRET = process.env.COOKIE_SECRET || crypto.randomBytes(32).toString('hex');
-    const CLIENT_ID = client.config.CLIENT_ID || client.user.id;
-    const CLIENT_SECRET = client.config.CLIENT_SECRET;
-    const REDIRECT_URI = client.config.REDIRECT_URI || 'http://localhost:3000/auth/callback';
+    // Configuration Validation Guard
+    const CLIENT_ID = config.CLIENT_ID;
+    const CLIENT_SECRET = config.CLIENT_SECRET;
+    const REDIRECT_URI = config.REDIRECT_URI || 'http://78.154.103.8:16362/auth/callback';
 
-    if (!CLIENT_SECRET) {
-        console.error('⚠️ [Dashboard] CLIENT_SECRET config dosyasında bulunamadı! OAuth2 çalışmayabilir.');
+    if (!CLIENT_ID || !CLIENT_SECRET || CLIENT_ID === 'PLACEHOLDER' || CLIENT_SECRET === 'PLACEHOLDER') {
+        console.error('🔴 [CRITICAL WARNING] Dashboard başlatılamıyor: config.CLIENT_ID veya config.CLIENT_SECRET eksik/hatalı. Lütfen .env dosyanızı kontrol edin.');
     }
 
     router.get('/login', (req, res) => {
+        if (!CLIENT_ID) return res.status(500).send('OAuth2 yapılandırılmamış. config.CLIENT_ID eksik.');
         const authUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=identify%20guilds.members.read`;
         res.redirect(authUrl);
     });
 
     router.get('/callback', async (req, res) => {
         const { code } = req.query;
-        if (!code) return res.status(400).send('Kod eksik.');
+        if (!code) {
+            return res.redirect('/auth/login');
+        }
 
         try {
-            // 1. Token Takası
+            // 1. Token Takası - Basic Auth ve RFC-6749 uyumluluğu ile
+            const credentials = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
             const tokenResponse = await fetch('https://discord.com/api/v10/oauth2/token', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded'
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Authorization': `Basic ${credentials}`
                 },
                 body: new URLSearchParams({
-                    client_id: CLIENT_ID,
-                    client_secret: CLIENT_SECRET,
                     grant_type: 'authorization_code',
                     code: code,
                     redirect_uri: REDIRECT_URI
@@ -40,9 +44,26 @@ function createAuthRouter(client) {
             });
 
             if (!tokenResponse.ok) {
-                const errBody = await tokenResponse.text();
-                console.error('🔴 [OAuth2 Error Details]:', errBody);
-                throw new Error(`Token hatası: ${tokenResponse.status}`);
+                const errorText = await tokenResponse.text();
+                console.error('[OAuth2 Auth Exchange Failed]: Status:', tokenResponse.status, 'Payload:', errorText);
+
+                // Code reuse veya geçersiz kod durumlarında kullanıcıyı temizce login'e yönlendir
+                if (tokenResponse.status === 400) {
+                    return res.redirect('/auth/login');
+                }
+
+                return res.status(tokenResponse.status).send(`
+                    <div style="font-family: sans-serif; padding: 2rem;">
+                        <h2 style="color: red;">Giriş Başarısız Oldu</h2>
+                        <p>OAuth2 Token takası reddedildi (Durum: ${tokenResponse.status}).</p>
+                        <p><strong>Lütfen şunları kontrol edin:</strong></p>
+                        <ul>
+                            <li><code>CLIENT_SECRET</code> doğruluğu</li>
+                            <li><code>REDIRECT_URI</code> (Örn: <code>${REDIRECT_URI}</code>) adresinin Discord Developer portalındaki yönlendirme adresi ile birebir eşleştiğinden emin olun.</li>
+                        </ul>
+                        <p><a href="/auth/login" style="color: #4f46e5; font-weight: bold;">Tekrar Giriş Yap</a></p>
+                    </div>
+                `);
             }
             
             const tokenData = await tokenResponse.json();
@@ -56,9 +77,9 @@ function createAuthRouter(client) {
             });
 
             if (!userResponse.ok) {
-                const errBody = await userResponse.text();
-                console.error('🔴 [OAuth2 Error Details - User Fetch]:', errBody);
-                throw new Error('Kullanıcı bilgileri alınamadı.');
+                const errorText = await userResponse.text();
+                console.error('[OAuth2 User Fetch Failed]: Status:', userResponse.status, 'Payload:', errorText);
+                return res.redirect('/auth/login');
             }
             
             const userData = await userResponse.json();
@@ -68,47 +89,30 @@ function createAuthRouter(client) {
                 ? `https://cdn.discordapp.com/avatars/${userId}/${userData.avatar}.png` 
                 : 'https://cdn.discordapp.com/embed/avatars/0.png';
 
-            // 3. Sunucu Üyesi (Guild Member) Fetch
-            const guildId = client.config.GUILD_ID;
-            const guild = client.guilds.cache.get(guildId) || await client.guilds.fetch(guildId).catch(() => null);
-            
+            // 3. Sunucu Üyesi (Guild Member) Fetch & Tip-Güvenli Yetki Çözümlemesi
+            const guildId = config.GUILD_ID;
             let isAdmin = false;
             let isStaff = false;
 
+            const guild = client.guilds.cache.get(guildId) || await client.guilds.fetch(guildId).catch(() => null);
             if (guild) {
-                try {
-                    const member = await guild.members.fetch(userId);
-                    
-                    const BOT_OWNER_ID = client.config.BOT_OWNER_ID || client.config.SAHIP_ID;
-                    const YETKILI_ROL_IDLERI = client.config.YETKILI_ROL_IDLERI ? client.config.YETKILI_ROL_IDLERI.split(',') : [];
-                    const STAFF_ROLES = client.config.STAFF_ROLES ? client.config.STAFF_ROLES.split(',') : [];
+                const member = await guild.members.fetch(userId).catch(() => null);
+                
+                // Safe helper to normalize staff roles regardless of data type
+                const staffRoleIds = Array.isArray(config.YETKILI_ROL_IDLERI)
+                    ? config.YETKILI_ROL_IDLERI
+                    : (typeof config.YETKILI_ROL_IDLERI === 'string' 
+                        ? config.YETKILI_ROL_IDLERI.split(',').map(r => r.trim()).filter(Boolean) 
+                        : []);
 
-                    if (userId === BOT_OWNER_ID || member.permissions.has('Administrator')) {
-                        isAdmin = true;
-                        isStaff = true;
-                    }
+                isStaff = member ? staffRoleIds.some(roleId => member.roles.cache.has(roleId)) : false;
 
-                    for (const roleId of YETKILI_ROL_IDLERI) {
-                        if (member.roles.cache.has(roleId)) {
-                            isAdmin = true;
-                            isStaff = true;
-                            break;
-                        }
-                    }
+                const hasAdminPerm = member && (
+                    member.permissions.has(PermissionFlagsBits.Administrator) ||
+                    member.permissions.has('Administrator')
+                );
 
-                    for (const roleId of STAFF_ROLES) {
-                        if (member.roles.cache.has(roleId)) {
-                            isStaff = true;
-                            break;
-                        }
-                    }
-                } catch (memberErr) {
-                    console.error('⚠️ [Dashboard OAuth2] Üye fetch hatası (Kullanıcı sunucuda olmayabilir veya önbellek hatası):', memberErr.message);
-                    isAdmin = false;
-                    isStaff = false;
-                }
-            } else {
-                console.error('⚠️ [Dashboard OAuth2] Ana sunucu bulunamadı.');
+                isAdmin = userIsOwner(userId, config) || hasAdminPerm || isStaff;
             }
 
             // 4. Çerez Kaydı
@@ -123,14 +127,14 @@ function createAuthRouter(client) {
             res.cookie('session_token', sessionPayload, {
                 httpOnly: true,
                 signed: true,
-                maxAge: 7 * 24 * 60 * 60 * 1000 // 7 gün
+                maxAge: 7 * 24 * 60 * 60 * 1000 // 7 gün TTL
             });
 
             // 5. Ana Sayfaya Yönlendir
             res.redirect('/');
         } catch (error) {
-            console.error('🔴 [Dashboard OAuth2] Hata:', error);
-            res.status(500).send('Giriş başarısız oldu. Lütfen yetkiliye bildirin.');
+            console.error('🔴 [Dashboard OAuth2] İç Sunucu Hatası:', error);
+            res.status(500).send('<h2 style="color:red;font-family:sans-serif;padding:2rem;">Giriş sırasında sunucu içi bir hata oluştu. Lütfen bot loglarını kontrol edin.</h2>');
         }
     });
 
@@ -139,7 +143,12 @@ function createAuthRouter(client) {
         res.redirect('/auth/login');
     });
 
-    return { authRouter: router, COOKIE_SECRET };
+    return { authRouter: router };
+}
+
+function userIsOwner(userId, config) {
+    const ownerId = config.BOT_OWNER_ID || config.SAHIP_ID;
+    return userId === ownerId;
 }
 
 module.exports = createAuthRouter;

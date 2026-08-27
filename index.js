@@ -1,3 +1,4 @@
+// --- index.js ---
 require('dotenv').config();
 const { verifyDatabase } = require('./src/services/systemMonitor');
 
@@ -10,7 +11,7 @@ const { verifyDatabase } = require('./src/services/systemMonitor');
     }
     console.log('✅ [Sistem] Veritabanı hazır.');
 
-    const { Client, GatewayIntentBits, Collection, Partials, EmbedBuilder, Options } = require('discord.js');
+    const { Client, GatewayIntentBits, Collection, Partials, EmbedBuilder, Options, ActivityType } = require('discord.js');
     const fs = require('fs');
     const config = require('./config.js');
     const setupErrorHandler = require('./src/utils/errorHandler');
@@ -51,31 +52,40 @@ const { verifyDatabase } = require('./src/services/systemMonitor');
         console.error('🔴 [Anti-Crash] Yakalanmayan İstisna:', error);
     });
 
-    // 4. Komut Handler (src/commands) — Sadece Ana Master Komutlar
+    // 4. Komut Handler (src/commands)
     const commandFiles = fs.readdirSync('./src/commands').filter(file => file.endsWith('.js'));
     for (const file of commandFiles) {
-        const command = require(`./src/commands/${file}`);
-        if (command.name) {
-            client.commands.set(command.name, command);
+        try {
+            const command = require(`./src/commands/${file}`);
+            const cmdName = command.data?.name || command.name;
+            if (cmdName) {
+                client.commands.set(cmdName, command);
+            }
+        } catch (cmdError) {
+            console.error(`🔴 [Komut Yükleme Hatası] ${file}:`, cmdError.message);
         }
     }
-    console.log(`📦 ${client.commands.size} master komut yüklendi: ${[...client.commands.keys()].join(', ')}`);
+    console.log(`📦 ${client.commands.size} komut yüklendi: ${[...client.commands.keys()].join(', ')}`);
 
     // 5. Event Handler (src/events)
     const eventFiles = fs.readdirSync('./src/events').filter(file => file.endsWith('.js') && !file.endsWith('.js.js') && file !== 'ready.js');
     for (const file of eventFiles) {
-        const event = require(`./src/events/${file}`);
-        if (event.once) {
-            client.once(event.name, (...args) => event.execute(...args, client));
-        } else {
-            client.on(event.name, (...args) => event.execute(...args, client));
+        try {
+            const event = require(`./src/events/${file}`);
+            if (event.once) {
+                client.once(event.name, (...args) => event.execute(...args, client));
+            } else {
+                client.on(event.name, (...args) => event.execute(...args, client));
+            }
+        } catch (eventError) {
+            console.error(`🔴 [Event Yükleme Hatası] ${file}:`, eventError.message);
         }
     }
 
     // 6. Cron Joblar (node-cron)
     const cron = require('node-cron');
     const db = require('croxydb');
-    const DUYURU_KANAL_ID = '914191232253702184';
+    const DUYURU_KANAL_ID = config.DUYURU_KANAL_ID || '914191232253702184';
 
     // Cron 1: Her gece 00:00 Zaman Kapsülü Kontrolü
     cron.schedule('0 0 * * *', async () => {
@@ -121,11 +131,44 @@ const { verifyDatabase } = require('./src/services/systemMonitor');
         }
     });
 
-    // 7. Botu Başlat
+    // 7. Dinamik Dönen Durum / Presence Rotasyonu
+    let presenceIndex = 0;
+    const startPresenceRotation = () => {
+        const updatePresence = () => {
+            if (!client.user) return;
+            const totalMembers = client.guilds.cache.reduce((a, g) => a + (g.memberCount || 0), 0);
+            const totalGuilds = client.guilds.cache.size;
+            const dashUrl = config.DASHBOARD_URL || 'http://78.154.103.8:16362';
+
+            const activities = [
+                { name: `${totalMembers} kullanıcıyı dinliyor`, type: ActivityType.Listening },
+                { name: `${totalGuilds} sunucuda nöbette!`, type: ActivityType.Watching },
+                { name: `/yardim | 🌐 ${dashUrl}`, type: ActivityType.Playing },
+                { name: `AniBot v2 • Güvenlik & Görev Sistemi`, type: ActivityType.Custom, state: `🌐 Panel: ${dashUrl}` }
+            ];
+
+            const current = activities[presenceIndex % activities.length];
+            client.user.setPresence({
+                activities: [current],
+                status: 'online'
+            });
+            presenceIndex++;
+        };
+
+        updatePresence();
+        setInterval(updatePresence, 15000);
+    };
+
+    // 8. Botu Başlat & Dashboard Bağla
     console.log('✅ [Sistem] Discord\'a bağlanılıyor...');
-    client.login(config.TOKEN).then(() => {
+    client.login(config.TOKEN || config.BOT_TOKEN).then(() => {
+        // Durum rotasyonunu başlat
+        startPresenceRotation();
+
         // Web Dashboard Başlat
         const { startDashboard } = require('./src/dashboard/server');
         startDashboard(client);
+    }).catch(err => {
+        console.error('🔴 [Giriş Hatası] Discord client giriş yapamadı:', err.message);
     });
 })();

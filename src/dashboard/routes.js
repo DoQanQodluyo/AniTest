@@ -18,7 +18,7 @@ function createApiRouter(client) {
     // ==========================================
     // 1. ÜYE (MEMBER) ENDPOINTLERİ
     // ==========================================
-    router.get('/user/profile', async (req, res) => {
+    router.get('/me', async (req, res) => {
         try {
             const { userId, username, avatar, isAdmin, isStaff } = req.user;
             const guildId = client.config.GUILD_ID;
@@ -112,7 +112,7 @@ function createApiRouter(client) {
         });
     });
 
-    router.post('/admin/channels/set', adminOnly, (req, res) => {
+    const handleChannelsSet = (req, res) => {
         const { channelId, type } = req.body;
         if (!channelId || !type) return res.status(400).json({ error: 'Eksik veri.' });
 
@@ -127,7 +127,10 @@ function createApiRouter(client) {
 
         db.set(dbKey, list);
         res.json({ success: true, message: `Kanal konfigürasyonu güncellendi.`, list });
-    });
+    };
+
+    router.post('/admin/channels', adminOnly, handleChannelsSet);
+    router.post('/admin/channels/set', adminOnly, handleChannelsSet);
 
     router.get('/admin/sicil/:targetUserId', adminOnly, (req, res) => {
         const { targetUserId } = req.params;
