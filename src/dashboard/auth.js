@@ -5,14 +5,13 @@ const crypto = require('crypto');
 function createAuthRouter(client) {
     const router = express.Router();
     
-    // Güvenlik anahtarı: Çerezleri imzalamak için (üretim ortamında .env'den alınmalıdır, şimdilik rastgele veya config'den)
     const COOKIE_SECRET = process.env.COOKIE_SECRET || crypto.randomBytes(32).toString('hex');
-    const CLIENT_ID = process.env.CLIENT_ID || client.user.id;
-    const CLIENT_SECRET = process.env.CLIENT_SECRET;
-    const REDIRECT_URI = process.env.REDIRECT_URI || 'http://localhost:3000/auth/callback';
+    const CLIENT_ID = client.config.CLIENT_ID || client.user.id;
+    const CLIENT_SECRET = client.config.CLIENT_SECRET;
+    const REDIRECT_URI = client.config.REDIRECT_URI || 'http://localhost:3000/auth/callback';
 
     if (!CLIENT_SECRET) {
-        console.error('⚠️ [Dashboard] CLIENT_SECRET .env dosyasında bulunamadı! OAuth2 çalışmayabilir.');
+        console.error('⚠️ [Dashboard] CLIENT_SECRET config dosyasında bulunamadı! OAuth2 çalışmayabilir.');
     }
 
     router.get('/login', (req, res) => {
@@ -41,8 +40,9 @@ function createAuthRouter(client) {
             });
 
             if (!tokenResponse.ok) {
-                const err = await tokenResponse.text();
-                throw new Error(`Token hatası: ${err}`);
+                const errBody = await tokenResponse.text();
+                console.error('🔴 [OAuth2 Error Details]:', errBody);
+                throw new Error(`Token hatası: ${tokenResponse.status}`);
             }
             
             const tokenData = await tokenResponse.json();
@@ -55,7 +55,12 @@ function createAuthRouter(client) {
                 }
             });
 
-            if (!userResponse.ok) throw new Error('Kullanıcı bilgileri alınamadı.');
+            if (!userResponse.ok) {
+                const errBody = await userResponse.text();
+                console.error('🔴 [OAuth2 Error Details - User Fetch]:', errBody);
+                throw new Error('Kullanıcı bilgileri alınamadı.');
+            }
+            
             const userData = await userResponse.json();
             const userId = userData.id;
             const username = userData.username;
@@ -67,44 +72,46 @@ function createAuthRouter(client) {
             const guildId = client.config.GUILD_ID;
             const guild = client.guilds.cache.get(guildId) || await client.guilds.fetch(guildId).catch(() => null);
             
-            if (!guild) {
-                return res.status(500).send('Ana sunucu bulunamadı.');
-            }
-
-            const member = await guild.members.fetch(userId).catch(() => null);
-            if (!member) {
-                return res.status(403).send('Bu panele erişmek için sunucuda üye olmalısınız.');
-            }
-
-            // 4. Yetki & Rol Kontrolü
-            const BOT_OWNER_ID = client.config.BOT_OWNER_ID || client.config.SAHIP_ID;
-            const YETKILI_ROL_IDLERI = client.config.YETKILI_ROL_IDLERI || [];
-            const STAFF_ROLES = client.config.STAFF_ROLES || [];
-
             let isAdmin = false;
             let isStaff = false;
 
-            if (userId === BOT_OWNER_ID || member.permissions.has('Administrator')) {
-                isAdmin = true;
-                isStaff = true;
-            }
+            if (guild) {
+                try {
+                    const member = await guild.members.fetch(userId);
+                    
+                    const BOT_OWNER_ID = client.config.BOT_OWNER_ID || client.config.SAHIP_ID;
+                    const YETKILI_ROL_IDLERI = client.config.YETKILI_ROL_IDLERI ? client.config.YETKILI_ROL_IDLERI.split(',') : [];
+                    const STAFF_ROLES = client.config.STAFF_ROLES ? client.config.STAFF_ROLES.split(',') : [];
 
-            for (const roleId of YETKILI_ROL_IDLERI) {
-                if (member.roles.cache.has(roleId)) {
-                    isAdmin = true;
-                    isStaff = true;
-                    break;
+                    if (userId === BOT_OWNER_ID || member.permissions.has('Administrator')) {
+                        isAdmin = true;
+                        isStaff = true;
+                    }
+
+                    for (const roleId of YETKILI_ROL_IDLERI) {
+                        if (member.roles.cache.has(roleId)) {
+                            isAdmin = true;
+                            isStaff = true;
+                            break;
+                        }
+                    }
+
+                    for (const roleId of STAFF_ROLES) {
+                        if (member.roles.cache.has(roleId)) {
+                            isStaff = true;
+                            break;
+                        }
+                    }
+                } catch (memberErr) {
+                    console.error('⚠️ [Dashboard OAuth2] Üye fetch hatası (Kullanıcı sunucuda olmayabilir veya önbellek hatası):', memberErr.message);
+                    isAdmin = false;
+                    isStaff = false;
                 }
+            } else {
+                console.error('⚠️ [Dashboard OAuth2] Ana sunucu bulunamadı.');
             }
 
-            for (const roleId of STAFF_ROLES) {
-                if (member.roles.cache.has(roleId)) {
-                    isStaff = true;
-                    break;
-                }
-            }
-
-            // 5. Çerez Kaydı
+            // 4. Çerez Kaydı
             const sessionPayload = {
                 userId,
                 username,
@@ -116,14 +123,14 @@ function createAuthRouter(client) {
             res.cookie('session_token', sessionPayload, {
                 httpOnly: true,
                 signed: true,
-                maxAge: 1000 * 60 * 60 * 24 * 7 // 7 gün
+                maxAge: 7 * 24 * 60 * 60 * 1000 // 7 gün
             });
 
-            // 6. Ana Sayfaya Yönlendir
+            // 5. Ana Sayfaya Yönlendir
             res.redirect('/');
         } catch (error) {
             console.error('🔴 [Dashboard OAuth2] Hata:', error);
-            res.status(500).send('Giriş başarısız oldu. Lütfen tekrar deneyin.');
+            res.status(500).send('Giriş başarısız oldu. Lütfen yetkiliye bildirin.');
         }
     });
 

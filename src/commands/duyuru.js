@@ -1,71 +1,76 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
-const db = require('croxydb');
+// --- src/commands/duyuru.js ---
+const { SlashCommandBuilder, EmbedBuilder, PermissionsBitField, ChannelType } = require('discord.js');
 const config = require('../../config.js');
 
-function yetkiliKontrolEt(member, user) {
-    if (!member && !user) return false;
-    const userId = user?.id || member?.id;
-    if (userId === config.BOT_OWNER_ID || userId === config.SAHIP_ID) return true;
-    if (member?.permissions?.has(PermissionFlagsBits.Administrator)) return true;
-
-    const izinliRoller = Array.isArray(config.YETKILI_ROL_IDLERI) ? config.YETKILI_ROL_IDLERI : [];
-    if (member?.roles?.cache) {
-        return member.roles.cache.some(role => izinliRoller.includes(role.id));
-    }
-    return false;
-}
-
-const data = new SlashCommandBuilder()
-    .setName('duyuru')
-    .setDescription('Gelişmiş duyuru mesajı gönderir')
-    .addChannelOption(opt => opt.setName('kanal').setDescription('Hedef kanal').setRequired(true))
-    .addStringOption(opt => opt.setName('baslik').setDescription('Duyuru başlığı').setRequired(true))
-    .addStringOption(opt => opt.setName('mesaj').setDescription('Duyuru açıklaması').setRequired(true))
-    .addStringOption(opt => 
-        opt.setName('ping_tipi')
-            .setDescription('Ping tipi')
-            .setRequired(true)
-            .addChoices(
-                { name: 'Everyone', value: 'Everyone' }, 
-                { name: 'Rol', value: 'Rol' }, 
-                { name: 'Yok', value: 'Yok' }
-            )
-    );
-
 module.exports = {
-    name: 'duyuru',
-    data: data.toJSON(),
-    description: 'Gelişmiş duyuru mesajı gönderir',
-    async execute(message, args, client) {
-        const options = message.slashOptions || message.options;
-        const member = message.member;
-        const user = message.author || message.user;
+    data: new SlashCommandBuilder()
+        .setName('duyuru')
+        .setDescription('Sunucuda gelişmiş bir duyuru yayınlar.')
+        .addStringOption(option => 
+            option.setName('baslik')
+                .setDescription('Duyuru başlığı')
+                .setRequired(true))
+        .addStringOption(option => 
+            option.setName('mesaj')
+                .setDescription('Duyuru içeriği')
+                .setRequired(true))
+        .addChannelOption(option => 
+            option.setName('kanal')
+                .setDescription('Duyurunun gönderileceği kanal')
+                .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+                .setRequired(true))
+        .addStringOption(option => 
+            option.setName('etiket')
+                .setDescription('Kimler etiketlensin?')
+                .addChoices(
+                    { name: 'Hiçbiri', value: 'none' },
+                    { name: '@everyone', value: 'everyone' },
+                    { name: '@here', value: 'here' }
+                )
+                .setRequired(false))
+        .addRoleOption(option => 
+            option.setName('rol')
+                .setDescription('Sadece belirli bir role ping atmak isterseniz seçin')
+                .setRequired(false)),
 
-        if (!yetkiliKontrolEt(member, user)) {
-            return message.reply({ content: '❌ Bu komutu kullanmak için yetkili olmalısınız.', flags: 64 });
+    async execute(interaction, client) {
+        const isAdmin = interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) || interaction.user.id === config.BOT_OWNER_ID;
+        if (!isAdmin) {
+            return interaction.reply({ content: '❌ Bu komutu sadece yöneticiler kullanabilir.', ephemeral: true });
         }
 
-        const targetChannel = options.getChannel('kanal');
-        const baslik = options.getString('baslik');
-        const duyuruMesaji = options.getString('mesaj');
-        const pingTipi = options.getString('ping_tipi');
+        const baslik = interaction.options.getString('baslik');
+        const mesaj = interaction.options.getString('mesaj');
+        const kanal = interaction.options.getChannel('kanal');
+        const etiketSecimi = interaction.options.getString('etiket');
+        const rolSecimi = interaction.options.getRole('rol');
 
-        if (!targetChannel?.isTextBased()) {
-            return message.reply({ content: '❌ Geçersiz kanal.', flags: 64 });
+        let pingContent = '';
+        if (rolSecimi) {
+            pingContent = `<@&${rolSecimi.id}>`;
+        } else if (etiketSecimi === 'everyone') {
+            pingContent = '@everyone';
+        } else if (etiketSecimi === 'here') {
+            pingContent = '@here';
         }
 
-        let content = '';
-        if (pingTipi === 'Everyone') content = '@everyone';
-
-        const { EmbedBuilder } = require('discord.js');
         const embed = new EmbedBuilder()
             .setTitle(`📢 ${baslik}`)
-            .setColor('Gold')
-            .setDescription(duyuruMesaji)
-            .setFooter({ text: `Duyuran: ${user.tag || user.username}` })
+            .setDescription(mesaj)
+            .setColor('Random')
+            .setFooter({ text: `${interaction.guild.name} Yönetimi`, iconURL: interaction.guild.iconURL() })
             .setTimestamp();
 
-        await targetChannel.send({ content: content || undefined, embeds: [embed] });
-        return message.reply({ content: `✅ Duyuru <#${targetChannel.id}> kanalına gönderildi.`, flags: 64 });
+        try {
+            if (pingContent !== '') {
+                await kanal.send({ content: pingContent, embeds: [embed] });
+            } else {
+                await kanal.send({ embeds: [embed] });
+            }
+            await interaction.reply({ content: `✅ Duyuru başarıyla ${kanal} kanalına gönderildi.`, ephemeral: true });
+        } catch (error) {
+            console.error('🔴 [Duyuru Hatası]', error);
+            await interaction.reply({ content: '❌ Duyuru gönderilirken bir hata oluştu. Kanal izinlerini kontrol edin.', ephemeral: true });
+        }
     }
 };

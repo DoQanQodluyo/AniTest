@@ -1,51 +1,105 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+// --- src/commands/sicil.js ---
+const { SlashCommandBuilder, EmbedBuilder, PermissionsBitField } = require('discord.js');
 const db = require('croxydb');
 const config = require('../../config.js');
 
-function yetkiliKontrolEt(member, user) {
-    if (!member && !user) return false;
-    const userId = user?.id || member?.id;
-    if (userId === config.BOT_OWNER_ID || userId === config.SAHIP_ID) return true;
-    if (member?.permissions?.has(PermissionFlagsBits.Administrator)) return true;
-
-    const izinliRoller = Array.isArray(config.YETKILI_ROL_IDLERI) ? config.YETKILI_ROL_IDLERI : [];
-    if (member?.roles?.cache) {
-        return member.roles.cache.some(role => izinliRoller.includes(role.id));
-    }
-    return false;
-}
-
-const data = new SlashCommandBuilder()
-    .setName('sicil')
-    .setDescription('Yetkili/kullanıcı sicil ve soruşturma geçmişini sorgular')
-    .addUserOption(opt => opt.setName('kullanici').setDescription('Hedef kullanıcı').setRequired(true));
-
 module.exports = {
-    name: 'sicil',
-    data: data.toJSON(),
-    description: 'Yetkili/kullanıcı sicil ve soruşturma geçmişini sorgular',
-    async execute(message, args, client) {
-        const options = message.slashOptions || message.options;
-        const member = message.member;
-        const user = message.author || message.user;
+    data: new SlashCommandBuilder()
+        .setName('sicil')
+        .setDescription('Kullanıcıların disiplin ve sicil kayıtlarını yönetir.')
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('sorgula')
+                .setDescription('Bir kullanıcının sicil geçmişini görüntüler.')
+                .addUserOption(option => option.setName('kullanici').setDescription('Sorgulanacak kullanıcı').setRequired(true))
+        )
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('ekle')
+                .setDescription('Bir kullanıcıya sicil kaydı ekler (Sadece Yetkililer).')
+                .addUserOption(option => option.setName('kullanici').setDescription('Hedef kullanıcı').setRequired(true))
+                .addStringOption(option => option.setName('ceza').setDescription('Uygulanan ceza türü').addChoices(
+                    { name: 'Uyarı (Uyar)', value: 'Uyar' },
+                    { name: 'Susturma (Mute)', value: 'Mute' },
+                    { name: 'Yasaklama (Ban)', value: 'Ban' }
+                ).setRequired(true))
+                .addStringOption(option => option.setName('sebep').setDescription('Cezanın sebebi').setRequired(true))
+        )
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('temizle')
+                .setDescription('Bir kullanıcının tüm sicil kayıtlarını siler (Sadece Yöneticiler).')
+                .addUserOption(option => option.setName('kullanici').setDescription('Sicili temizlenecek kullanıcı').setRequired(true))
+        ),
 
-        const errorEmbed = (msg) => new EmbedBuilder().setColor('Red').setDescription(`❌ ${msg}`);
-
-        if (!yetkiliKontrolEt(member, user)) {
-            return message.reply({ embeds: [errorEmbed('Bu komutu kullanmak için yetkili olmalısınız.')], flags: 64 });
+    async execute(interaction, client) {
+        const subCmd = interaction.options.getSubcommand();
+        const targetUser = interaction.options.getUser('kullanici');
+        const dbKey = `sicil_${targetUser.id}`;
+        
+        // Yetki Kontrolleri
+        const isAdmin = interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) || interaction.user.id === config.BOT_OWNER_ID;
+        
+        // Mod rol kontrolü (kısmi yetki)
+        let isStaff = isAdmin;
+        if (!isStaff && config.YETKILI_ROL_IDLERI) {
+            const yetkiliRolleri = config.YETKILI_ROL_IDLERI.split(',');
+            for (const rolId of yetkiliRolleri) {
+                if (interaction.member.roles.cache.has(rolId)) {
+                    isStaff = true;
+                    break;
+                }
+            }
         }
 
-        const targetUser = options?.getUser?.('kullanici') || (message.mentions?.users?.first ? message.mentions.users.first() : null);
-        if (!targetUser) return message.reply({ embeds: [errorEmbed('Lütfen bir kullanıcı belirtin.')], flags: 64 });
+        if (subCmd === 'sorgula') {
+            const sicilKayitlari = db.get(dbKey) || [];
+            
+            if (sicilKayitlari.length === 0) {
+                return interaction.reply({ content: `✅ <@${targetUser.id}> isimli kullanıcının sicili temiz. Kayıt bulunamadı.`, ephemeral: true });
+            }
 
-        const sicilList = db.get(`sicil_${targetUser.id}`) || [];
-        const text = sicilList.length ? sicilList.map((s, i) => `**ID: ${i + 1}** - ${s.sebep || s}`).join('\n') : '*Temiz sicil kaydı.*';
-        
-        const sicilEmbed = new EmbedBuilder()
-            .setColor('Blue')
-            .setTitle(`📁 <@${targetUser.id}> Sicil Kayıtları`)
-            .setDescription(text);
+            const embed = new EmbedBuilder()
+                .setTitle(`📂 ${targetUser.username} - Sicil Dosyası`)
+                .setColor('Orange')
+                .setThumbnail(targetUser.displayAvatarURL())
+                .setDescription(`Toplam **${sicilKayitlari.length}** adet kayıt bulundu.\nDetaylı inceleme için Web Dashboard'u kullanabilirsiniz.`);
 
-        return message.reply({ embeds: [sicilEmbed], flags: 64 });
+            sicilKayitlari.slice(-5).forEach((kayit, index) => { // Sadece son 5 kaydı göster
+                const tarih = new Date(kayit.tarih).toLocaleDateString('tr-TR');
+                embed.addFields({
+                    name: `${index + 1}. Kayıt - [${kayit.ceza}] - ${tarih}`,
+                    value: `**Sebep:** ${kayit.sebep}\n**Yetkili:** ${kayit.yetkili}`
+                });
+            });
+
+            return interaction.reply({ embeds: [embed] });
+        }
+
+        if (subCmd === 'ekle') {
+            if (!isStaff) return interaction.reply({ content: '❌ Bu işlemi yalnızca yetkililer yapabilir.', ephemeral: true });
+            
+            const cezaTuru = interaction.options.getString('ceza');
+            const sebep = interaction.options.getString('sebep');
+            
+            const sicilKayitlari = db.get(dbKey) || [];
+            
+            sicilKayitlari.push({
+                tarih: new Date().toISOString(),
+                sebep: sebep,
+                ceza: cezaTuru,
+                yetkili: interaction.user.tag
+            });
+
+            db.set(dbKey, sicilKayitlari);
+            return interaction.reply({ content: `✅ <@${targetUser.id}> adlı kullanıcının dosyasına **[${cezaTuru}]** kaydı eklendi.` });
+        }
+
+        if (subCmd === 'temizle') {
+            if (!isAdmin) return interaction.reply({ content: '❌ Sicil temizleme işlemini yalnızca üst düzey yöneticiler yapabilir.', ephemeral: true });
+            
+            db.delete(dbKey);
+            return interaction.reply({ content: `🧹 <@${targetUser.id}> adlı kullanıcının tüm sicil geçmişi başarıyla silindi.` });
+        }
     }
 };
